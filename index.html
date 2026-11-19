@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Simple IPTV</title>
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #0f1115;
+      color: #ffffff;
+      padding: 16px;
+    }
+    .top-bar {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-bottom: 12px;
+    }
+    input, button {
+      padding: 12px 14px;
+      font-size: 16px;
+      border-radius: 10px;
+      border: 1px solid #2a2f3a;
+      background: #181b22;
+      color: #ffffff;
+    }
+    input { flex: 1; min-width: 220px; }
+    button {
+      cursor: pointer;
+      background: #2563eb;
+      border: none;
+      font-weight: 600;
+    }
+    .categories {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 16px;
+    }
+    .cat-btn {
+      background: #181b22;
+      border: 1px solid #2a2f3a;
+      color: #cbd5e1;
+      padding: 8px 14px;
+      font-size: 14px;
+    }
+    .cat-btn.active {
+      background: #2563eb;
+      border-color: #2563eb;
+      color: #ffffff;
+    }
+    .cat-btn.fav-active {
+      background: #e11d48;
+      border-color: #e11d48;
+      color: #ffffff;
+    }
+    button:focus, input:focus, .channel:focus {
+      outline: 3px solid #38bdf8;
+      outline-offset: 2px;
+    }
+
+    /* Player Box */
+    #player-box {
+      display: none;
+      margin-bottom: 18px;
+      background: #000;
+      border-radius: 12px;
+      overflow: hidden;
+      border: 1px solid #2a2f3a;
+    }
+    #now-playing {
+      padding: 10px 14px;
+      background: #181b22;
+      font-size: 15px;
+      font-weight: 600;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+    }
+    .player-controls {
+      display: flex;
+      gap: 8px;
+    }
+    .small-btn {
+      padding: 6px 12px;
+      font-size: 13px;
+      background: #334155;
+    }
+    .small-btn.cc-on {
+      background: #16a34a;
+    }
+    video, iframe {
+      width: 100%;
+      height: 55vh;
+      max-height: 520px;
+      display: block;
+      background: #000;
+      border: none;
+    }
+
+    /* Channel Grid */
+    .status {
+      color: #94a3b8;
+      font-size: 14px;
+      margin-bottom: 12px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+      gap: 12px;
+    }
+    .channel {
+      background: #181b22;
+      border: 1px solid #2a2f3a;
+      padding: 12px 14px;
+      border-radius: 10px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      cursor: pointer;
+    }
+    .channel-info { overflow: hidden; margin-right: 10px; }
+    .channel-name {
+      font-weight: 600;
+      font-size: 15px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .channel-cat {
+      font-size: 12px;
+      color: #94a3b8;
+      margin-top: 3px;
+    }
+    .fav-btn {
+      background: transparent;
+      font-size: 20px;
+      padding: 4px 8px;
+      flex-shrink: 0;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Video & YouTube Player -->
+  <div id="player-box">
+    <div id="now-playing">
+      <span id="player-title">Playing</span>
+      <div class="player-controls">
+        <button id="cc-btn" class="small-btn" style="display:none;" onclick="toggleSubtitles()">CC: Off</button>
+        <button class="small-btn" onclick="closePlayer()">Close</button>
+      </div>
+    </div>
+    <video id="video" controls autoplay playsinline></video>
+    <iframe id="yt-frame" style="display:none;" allow="autoplay; encrypted-media; fullscreen" allowfullscreen></iframe>
+  </div>
+
+  <!-- URL Bar: Supports .m3u, .m3u8, and YouTube links -->
+  <div class="top-bar">
+    <input id="m3u-url" type="text" placeholder="Paste .m3u, .m3u8, or YouTube link here"
+           value="https://iptv-org.github.io/iptv/index.m3u" />
+    <button onclick="loadPlaylist()">Load</button>
+  </div>
+
+  <!-- Search Bar -->
+  <div class="top-bar">
+    <input id="search" type="text" placeholder="Search channels or videos..." oninput="renderChannels()" />
+  </div>
+
+  <!-- Categories + Favorites -->
+  <div class="categories">
+    <button class="cat-btn active" data-cat="All" onclick="selectCategory('All')">All</button>
+    <button class="cat-btn" data-cat="Favorites" onclick="selectCategory('Favorites')">❤️ Favorites</button>
+    <button class="cat-btn" data-cat="Movies" onclick="selectCategory('Movies')">🎬 Movies</button>
+    <button class="cat-btn" data-cat="Music" onclick="selectCategory('Music')">🎵 Music</button>
+    <button class="cat-btn" data-cat="Lifestyle" onclick="selectCategory('Lifestyle')">✈️ Lifestyle</button>
+    <button class="cat-btn" data-cat="Series" onclick="selectCategory('Series')">📺 Series</button>
+    <button class="cat-btn" data-cat="General" onclick="selectCategory('General')">🌐 General</button>
+  </div>
+
+  <div id="status-text" class="status">Loading channels...</div>
+  <div id="channel-list" class="grid"></div>
+
+  <script>
+    let allChannels = [];
+    // Store favorites as full objects so custom YouTube links & channels stay saved even when switching playlists
+    let favorites = JSON.parse(localStorage.getItem("iptv_fav_items") || "[]");
+    let activeCategory = "All";
+    let hls = null;
+    let ccEnabled = false;
+
+    function detectCategory(rawGroup, name) {
+      const text = `${rawGroup} ${name}`.toLowerCase();
+      if (/\b(movie|movies|film|films|cinema|cine|bollywood|hollywood|tollywood|kollywood)\b/.test(text)) return "Movies";
+      if (/\b(music|mtv|vh1|hits|song|songs|radio|concert|rock|pop|jazz|classic fm|melody)\b/.test(text)) return "Music";
+      if (/\b(lifestyle|travel|food|cook|cooking|kitchen|culinary|fashion|home|garden|living|tlc|hgtv)\b/.test(text)) return "Lifestyle";
+      if (/\b(series|drama|sitcom|show|shows|soap|entertainment|comedy|anime|cartoon|kids)\b/.test(text)) return "Series";
+      return "General";
+    }
+
+    // Convert YouTube watch/short/playlist links into embed URL with English captions enabled
+    function getYouTubeEmbedUrl(url) {
+      try {
+        const parsed = new URL(url);
+        const listId = parsed.searchParams.get("list");
+        let videoId = "";
+
+        if (parsed.hostname.includes("youtu.be")) {
+          videoId = parsed.pathname.slice(1);
+        } else if (parsed.hostname.includes("youtube.com")) {
+          videoId = parsed.searchParams.get("v") || "";
+          if (!videoId && parsed.pathname.startsWith("/shorts/")) {
+            videoId = parsed.pathname.split("/")[2];
+          }
+        }
+
+        if (listId && !videoId) {
+          return `https://www.youtube.com/embed/videoseries?list=${listId}&autoplay=1&cc_load_policy=1&cc_lang_pref=en`;
+        }
+        if (videoId) {
+          return `https://www.youtube.com/embed/${videoId}?autoplay=1&cc_load_policy=1&cc_lang_pref=en`;
+        }
+      } catch (e) {}
+      return null;
+    }
+
+    // 1. Load M3U, M3U8, or YouTube Link
+    async function loadPlaylist() {
+      const url = document.getElementById("m3u-url").value.trim();
+      const status = document.getElementById("status-text");
+      if (!url) return;
+
+      // Handle YouTube links
+      if (url.includes("youtube.com") || url.includes("youtu.be")) {
+        const title = prompt("Enter a name for this YouTube video/playlist (e.g. Spanish Lesson):", "Spanish / French YouTube") || "YouTube Video";
+        const ytItem = { name: title, url: url, category: detectCategory("", title) };
+        allChannels = [ytItem, ...allChannels];
+        renderChannels();
+        playStream(ytItem);
+        return;
+      }
+
+      // Handle single direct .m3u8 links
+      if (url.split("?")[0].toLowerCase().endsWith(".m3u8")) {
+        const streamItem = { name: "Live M3U8 Stream", url: url, category: "General" };
+        allChannels = [streamItem];
+        renderChannels();
+        playStream(streamItem);
+        return;
+      }
+
+      // Handle .m3u playlists
+      status.textContent = "Loading playlist...";
+      try {
+        const res = await fetch(url);
+        const text = await res.text();
+        const lines = text.split("\n").map(l => l.trim());
+
+        allChannels = [];
+        let currentName = "Unknown Channel";
+        let currentGroup = "";
+
+        for (const line of lines) {
+          if (line.startsWith("#EXTINF:")) {
+            const groupMatch = line.match(/group-title="([^"]*)"/i);
+            currentGroup = groupMatch ? groupMatch[1] : "";
+            currentName = line.split(",").pop().trim() || "Channel";
+          } else if (line.startsWith("http://") || line.startsWith("https://")) {
+            allChannels.push({
+              name: currentName,
+              url: line,
+              category: detectCategory(currentGroup, currentName)
+            });
+            currentName = "Unknown Channel";
+            currentGroup = "";
+          }
+        }
+        renderChannels();
+      } catch (err) {
+        status.textContent = "Could not load playlist. Make sure the link is valid and uses https://.";
+      }
+    }
+
+    function selectCategory(category) {
+      activeCategory = category;
+      document.querySelectorAll(".cat-btn").forEach(btn => {
+        btn.classList.remove("active", "fav-active");
+        if (btn.dataset.cat === category) {
+          btn.classList.add(category === "Favorites" ? "fav-active" : "active");
+        }
+      });
+      renderChannels();
+    }
+
+    function renderChannels() {
+      const query = document.getElementById("search").value.toLowerCase().trim();
+      const list = document.getElementById("channel-list");
+      const status = document.getElementById("status-text");
+      list.innerHTML = "";
+
+      // If viewing Favorites, show all saved favorites even if they came from YouTube or another M3U
+      const sourceList = activeCategory === "Favorites" ? favorites : allChannels;
+
+      const filtered = sourceList.filter(ch => {
+        const matchesSearch = !query || ch.name.toLowerCase().includes(query);
+        const matchesCat =
+          activeCategory === "All" ||
+          activeCategory === "Favorites" ||
+          ch.category === activeCategory;
+        return matchesSearch && matchesCat;
+      });
+
+      const shown = filtered.slice(0, 250);
+      status.textContent = `Showing ${shown.length} of ${filtered.length} items`;
+
+      shown.forEach(ch => {
+        const isFav = favorites.some(f => f.url === ch.url);
+        const card = document.createElement("div");
+        card.className = "channel";
+        card.tabIndex = 0;
+        card.onclick = () => playStream(ch);
+        card.onkeydown = (e) => { if (e.key === "Enter") playStream(ch); };
+
+        const info = document.createElement("div");
+        info.className = "channel-info";
+
+        const nameDiv = document.createElement("div");
+        nameDiv.className = "channel-name";
+        nameDiv.textContent = ch.name;
+
+        const catDiv = document.createElement("div");
+        catDiv.className = "channel-cat";
+        catDiv.textContent = ch.category;
+
+        info.appendChild(nameDiv);
+        info.appendChild(catDiv);
+
+        const favBtn = document.createElement("button");
+        favBtn.className = "fav-btn";
+        favBtn.textContent = isFav ? "❤️" : "🤍";
+        favBtn.onclick = (e) => toggleFav(e, ch);
+
+        card.appendChild(info);
+        card.appendChild(favBtn);
+        list.appendChild(card);
+      });
+    }
+
+    // Play M3U8 or YouTube Stream
+    function playStream(channel) {
+      const box = document.getElementById("player-box");
+      const video = document.getElementById("video");
+      const ytFrame = document.getElementById("yt-frame");
+      const ccBtn = document.getElementById("cc-btn");
+
+      document.getElementById("player-title").textContent = `Now Playing: ${channel.name}`;
+      box.style.display = "block";
+      ccBtn.style.display = "none";
+      ccEnabled = false;
+      ccBtn.textContent = "CC: Off";
+      ccBtn.classList.remove("cc-on");
+
+      if (hls) {
+        hls.destroy();
+        hls = null;
+      }
+
+      const ytEmbed = getYouTubeEmbedUrl(channel.url);
+      if (ytEmbed) {
+        video.pause();
+        video.style.display = "none";
+        ytFrame.style.display = "block";
+        ytFrame.src = ytEmbed;
+      } else {
+        ytFrame.src = "";
+        ytFrame.style.display = "none";
+        video.style.display = "block";
+
+        if (Hls.isSupported() && channel.url.toLowerCase().includes(".m3u8")) {
+          hls = new Hls();
+          hls.loadSource(channel.url);
+          hls.attachMedia(video);
+
+          // Show CC button if the stream includes built-in subtitle tracks
+          hls.on(Hls.Events.SUBTITLE_TRACKS_UPDATED, (_, data) => {
+            if (data.subtitleTracks && data.subtitleTracks.length > 0) {
+              ccBtn.style.display = "inline-block";
+              hls.subtitleDisplay = true;
+            }
+          });
+        } else {
+          video.src = channel.url;
+        }
+        video.play().catch(() => {});
+      }
+
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+
+    // Toggle built-in M3U8 subtitles
+    function toggleSubtitles() {
+      if (!hls || !hls.subtitleTracks.length) return;
+      const ccBtn = document.getElementById("cc-btn");
+      ccEnabled = !ccEnabled;
+
+      if (ccEnabled) {
+        // Prefer English track if available, otherwise pick first track
+        const enIndex = hls.subtitleTracks.findIndex(t =>
+          (t.lang && t.lang.toLowerCase().startsWith("en")) ||
+          (t.name && t.name.toLowerCase().includes("english"))
+        );
+        hls.subtitleTrack = enIndex !== -1 ? enIndex : 0;
+        ccBtn.textContent = "CC: On";
+        ccBtn.classList.add("cc-on");
+      } else {
+        hls.subtitleTrack = -1;
+        ccBtn.textContent = "CC: Off";
+        ccBtn.classList.remove("cc-on");
+      }
+    }
+
+    function closePlayer() {
+      const video = document.getElementById("video");
+      const ytFrame = document.getElementById("yt-frame");
+      video.pause();
+      ytFrame.src = "";
+      if (hls) {
+        hls.destroy();
+        hls = null;
+      }
+      document.getElementById("player-box").style.display = "none";
+    }
+
+    function toggleFav(event, channel) {
+      event.stopPropagation();
+      const exists = favorites.some(f => f.url === channel.url);
+      if (exists) {
+        favorites = favorites.filter(f => f.url !== channel.url);
+      } else {
+        favorites.push(channel);
+      }
+      localStorage.setItem("iptv_fav_items", JSON.stringify(favorites));
+      renderChannels();
+    }
+
+    loadPlaylist();
+  </script>
+</body>
+</html>
